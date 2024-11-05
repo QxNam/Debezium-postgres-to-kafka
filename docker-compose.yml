@@ -1,0 +1,121 @@
+services:
+  postgres:
+    container_name: postgres
+    image: quay.io/debezium/example-postgres:3.0.0.Final
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    networks:
+      - dbz-net
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: always
+   
+  zookeeper:
+    container_name: zookeeper
+    image: quay.io/debezium/zookeeper:3.0.0.Final
+    ports:
+      - 2181:2181
+      - 2888:2888
+      - 3888:3888
+    networks:
+      - dbz-net
+    restart: always
+
+  kafka:
+    container_name: kafka
+    image: quay.io/debezium/kafka:3.0.0.Final
+    ports:
+      - 9092:9092
+    depends_on:
+      - zookeeper
+    environment:
+      - ZOOKEEPER_CONNECT=zookeeper:2181
+    networks:
+      - dbz-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    
+  kafka-ui:
+    platform: linux/amd64
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    depends_on:
+      - kafka
+    ports:
+      - 8084:8084
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "local"
+      KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: "kafka:9092"
+      KAFKA_CLUSTERS_0_ZOOKEEPER: "zookeeper:2181"
+      SERVER_PORT: 8084
+    networks:
+      - dbz-net
+    restart: always
+
+  debezium:
+    container_name: debezium
+    image: quay.io/debezium/connect:3.0.0.Final
+    ports:
+      - 8083:8083
+    depends_on:
+      - kafka
+      - postgres
+    environment:
+      - BOOTSTRAP_SERVERS=kafka:9092
+      - GROUP_ID=1
+      - CONFIG_STORAGE_TOPIC=my_connect_configs
+      - OFFSET_STORAGE_TOPIC=my_connect_offsets
+      - STATUS_STORAGE_TOPIC=my_connect_statuses
+    networks:
+      - dbz-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+
+  debezium-ui:
+    platform: linux/amd64
+    container_name: debezium-ui
+    image: debezium/debezium-ui:latest
+    depends_on:
+      - debezium
+    ports:
+      - '8080:8080'
+    environment:
+      KAFKA_CONNECT_URIS: http://debezium:8083
+    networks:
+      - dbz-net
+    restart: always
+
+  init-connect:
+    container_name: init-connect
+    build: connector
+    depends_on:
+      debezium:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - dbz-net
+    volumes:
+      - ./connector:/app
+    restart: "no"
+
+networks:
+  dbz-net:
+    driver: bridge
